@@ -21,7 +21,8 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "crsf.h"
+#include "crsf_parser.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -45,7 +46,7 @@ TIM_HandleTypeDef htim2;
 PCD_HandleTypeDef hpcd_USB_FS;
 
 /* USER CODE BEGIN PV */
-
+crsf_parser_t crsf_parser;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -55,6 +56,11 @@ static void MX_USB_PCD_Init(void);
 static void MX_TIM2_Init(void);
 /* USER CODE BEGIN PFP */
 static void Set_PWM1_Duty(uint16_t duty_cycle_hundredths);
+void on_crsf_frame(uint8_t type,
+                   uint8_t dest_addr, // 0 for non-extended frames
+                   uint8_t orig_addr, // 0 for non-extended frames
+                   const uint8_t *payload,
+                   uint8_t payload_len);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -95,7 +101,7 @@ int main(void)
   MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
   HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_2);
-
+  crsf_parser_init(&crsf_parser, CRSF_ADDRESS_RC, on_crsf_frame);
 
   /* USER CODE END 2 */
 
@@ -305,6 +311,14 @@ void Set_PWM1_Duty(uint16_t duty_cycle_hundredths)
   __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, pulse);
 }
 
+void on_crsf_frame(uint8_t type,
+                   uint8_t dest_addr, // 0 for non-extended frames
+                   uint8_t orig_addr, // 0 for non-extended frames
+                   const uint8_t *payload,
+                   uint8_t payload_len)
+{
+
+}
 /* USER CODE END 4 */
 
 /**

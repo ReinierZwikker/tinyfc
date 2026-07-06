@@ -1,0 +1,3 @@
+[submodule "Libraries/crsf-c"]
+	path = Libraries/crsf-c
+	url = https://github.com/karimelkheshen/crsf-c.git

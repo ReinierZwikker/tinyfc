@@ -40,16 +40,19 @@ add_subdirectory(cmake/stm32cubemx)
 # Link directories setup
 target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined library search paths
+    Libraries/crsf-c
 )
 
 # Add sources to executable
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
+    Libraries/crsf-c/crsf_parser.h Libraries/crsf-c/crsf.h Libraries/crsf-c/crsf.c
 )
 
 # Add include paths
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined include paths
+    Libraries/crsf-c
 )
 
 # Add project symbols (macros)

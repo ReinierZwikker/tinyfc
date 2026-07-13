@@ -36,6 +36,13 @@ extern "C" {
 
 /* Exported types ------------------------------------------------------------*/
 /* USER CODE BEGIN ET */
+#define UART3_RX_BUFFER_SIZE 256
+
+typedef struct {
+  uint8_t buffer[UART3_RX_BUFFER_SIZE];
+  volatile uint16_t head;
+  volatile uint16_t tail;
+} uart_buffer_t;
 
 /* USER CODE END ET */
 
@@ -61,8 +68,18 @@ void Error_Handler(void);
 /* Private defines -----------------------------------------------------------*/
 #define LED1_Pin GPIO_PIN_13
 #define LED1_GPIO_Port GPIOC
-#define PWM1_Pin GPIO_PIN_1
+#define PWM0_Pin GPIO_PIN_1
+#define PWM0_GPIO_Port GPIOA
+#define PWM1_Pin GPIO_PIN_2
 #define PWM1_GPIO_Port GPIOA
+#define PWM2_Pin GPIO_PIN_3
+#define PWM2_GPIO_Port GPIOA
+#define PWM3_Pin GPIO_PIN_6
+#define PWM3_GPIO_Port GPIOA
+#define PWM4_Pin GPIO_PIN_7
+#define PWM4_GPIO_Port GPIOA
+#define VBAT_MEAS_Pin GPIO_PIN_1
+#define VBAT_MEAS_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
 

@@ -68,18 +68,18 @@ void Error_Handler(void);
 /* Private defines -----------------------------------------------------------*/
 #define LED1_Pin GPIO_PIN_13
 #define LED1_GPIO_Port GPIOC
-#define PWM0_Pin GPIO_PIN_1
-#define PWM0_GPIO_Port GPIOA
-#define PWM1_Pin GPIO_PIN_2
-#define PWM1_GPIO_Port GPIOA
-#define PWM2_Pin GPIO_PIN_3
-#define PWM2_GPIO_Port GPIOA
-#define PWM3_Pin GPIO_PIN_6
+#define PWM3_Pin GPIO_PIN_1
 #define PWM3_GPIO_Port GPIOA
-#define PWM4_Pin GPIO_PIN_7
+#define PWM4_Pin GPIO_PIN_2
 #define PWM4_GPIO_Port GPIOA
 #define VBAT_MEAS_Pin GPIO_PIN_1
 #define VBAT_MEAS_GPIO_Port GPIOB
+#define PWM2_Pin GPIO_PIN_13
+#define PWM2_GPIO_Port GPIOB
+#define PWM1_Pin GPIO_PIN_14
+#define PWM1_GPIO_Port GPIOB
+#define PWM0_Pin GPIO_PIN_15
+#define PWM0_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
 

@@ -52,6 +52,7 @@
 /* Private variables ---------------------------------------------------------*/
 ADC_HandleTypeDef hadc1;
 
+TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim3;
 
@@ -66,8 +67,10 @@ crsf_frame_link_stats_t radio_link_stats;
 uint32_t radio_link_stats_last_update = UINT32_MAX;
 
 uint16_t received_crsf_channels[CRSF_CHANNEL_COUNT];
-uint16_t current_pwm_channels[PWM_CHANNEL_COUNT];
-uint16_t target_PWM_channels[PWM_CHANNEL_COUNT];
+
+int16_t current_actuator_channels[ACTUATOR_CHANNEL_COUNT];
+
+uint16_t output_actuator_channels[ACTUATOR_CHANNEL_COUNT];
 
 int16_t previous_rotor_throttle = -NORM_RANGE;
 
@@ -110,6 +113,7 @@ static void MX_TIM2_Init(void);
 static void MX_USART3_UART_Init(void);
 static void MX_TIM3_Init(void);
 static void MX_ADC1_Init(void);
+static void MX_TIM1_Init(void);
 /* USER CODE BEGIN PFP */
 void enable_status_led();
 void disable_status_led();
@@ -119,14 +123,15 @@ void send_debug_message(char *name, uint8_t name_length, uint8_t id, int16_t val
 void set_PWM0_duty(uint16_t duty_cycle_hundredths);
 void set_PWM1_duty(uint16_t duty_cycle_hundredths);
 void set_PWM2_duty(uint16_t duty_cycle_hundredths);
-void set_PWM3_duty(uint16_t duty_cycle_hundredths);
-void set_PWM4_duty(uint16_t duty_cycle_hundredths);
-uint16_t get_PWM0_duty();
-uint16_t get_PWM1_duty();
-uint16_t get_PWM2_duty();
-uint16_t get_PWM3_duty();
-uint16_t get_PWM4_duty();
+void set_PWM3_duty(uint16_t pulse);
+void set_PWM4_duty(uint16_t pulse);
+//uint16_t get_PWM0_duty();
+//uint16_t get_PWM1_duty();
+//uint16_t get_PWM2_duty();
+//uint16_t get_PWM3_duty();
+//uint16_t get_PWM4_duty();
 void update_PWM();
+void update_Oneshot125();
 void on_crsf_frame(uint8_t type,
                    uint8_t dest_addr, // 0 for non-extended frames
                    uint8_t orig_addr, // 0 for non-extended frames
@@ -172,20 +177,26 @@ int main(void)
   MX_USB_DEVICE_Init();
   MX_TIM3_Init();
   MX_ADC1_Init();
+  MX_TIM1_Init();
   /* USER CODE BEGIN 2 */
   set_status_led(LED_STATE_OFF);
-
-  HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_2);
-  HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_3);
-  HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_4);
-  HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
-  HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_2);
 
   set_PWM0_duty(PWM_MID);
   set_PWM1_duty(PWM_MID);
   set_PWM2_duty(PWM_MID);
-  set_PWM3_duty(PWM_MID);
-  set_PWM4_duty(PWM_MID);
+  set_PWM3_duty(ONESHOT125_DISARMED);
+  set_PWM4_duty(ONESHOT125_DISARMED);
+
+  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
+  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);
+
+  HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_1);
+  HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_2);
+  HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_3);
+
+  HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_2);
+  HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_3);
 
   crsf_parser_init(&crsf_parser, CRSF_ADDRESS_FC, on_crsf_frame);
 
@@ -195,8 +206,14 @@ int main(void)
   uint32_t last_pwm_update = HAL_GetTick();
 
   memset(received_crsf_channels, 0, sizeof(received_crsf_channels));
-  memset(target_PWM_channels, PWM_MID, sizeof(target_PWM_channels));
-  memset(current_pwm_channels, PWM_MID, sizeof(target_PWM_channels));
+  memset(current_actuator_channels, 0, sizeof(current_actuator_channels));
+
+  output_actuator_channels[ACTUATOR_SWASH_LEFT] = PWM_MID;
+  output_actuator_channels[ACTUATOR_SWASH_RIGHT] = PWM_MID;
+  output_actuator_channels[ACTUATOR_SWASH_AFT] = PWM_MID;
+  output_actuator_channels[ACTUATOR_MAIN_ROTOR] = ONESHOT125_DISARMED;
+  output_actuator_channels[ACTUATOR_TAIL_ROTOR] = ONESHOT125_DISARMED;
+
 
   uint8_t init_msg[] = "HELI FC Started up!\r\n";
   CDC_Transmit_FS(init_msg, sizeof(init_msg) - 1);
@@ -237,6 +254,7 @@ int main(void)
     if (current_tick - last_pwm_update > PWM_UPDATE_PERIOD_MS) {
       last_pwm_update = current_tick;
       update_PWM();
+      update_Oneshot125();
     }
 
     // Handle LED blinking
@@ -403,6 +421,89 @@ static void MX_ADC1_Init(void)
 }
 
 /**
+  * @brief TIM1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM1_Init(void)
+{
+
+  /* USER CODE BEGIN TIM1_Init 0 */
+
+  /* USER CODE END TIM1_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_OC_InitTypeDef sConfigOC = {0};
+  TIM_BreakDeadTimeConfigTypeDef sBreakDeadTimeConfig = {0};
+
+  /* USER CODE BEGIN TIM1_Init 1 */
+
+  /* USER CODE END TIM1_Init 1 */
+  htim1.Instance = TIM1;
+  htim1.Init.Prescaler = 49;
+  htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim1.Init.Period = 19200;
+  htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim1.Init.RepetitionCounter = 0;
+  htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim1, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_Init(&htim1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim1, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigOC.OCMode = TIM_OCMODE_PWM1;
+  sConfigOC.Pulse = 1920;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCNPolarity = TIM_OCNPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  sConfigOC.OCIdleState = TIM_OCIDLESTATE_RESET;
+  sConfigOC.OCNIdleState = TIM_OCNIDLESTATE_RESET;
+  if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sBreakDeadTimeConfig.OffStateRunMode = TIM_OSSR_DISABLE;
+  sBreakDeadTimeConfig.OffStateIDLEMode = TIM_OSSI_DISABLE;
+  sBreakDeadTimeConfig.LockLevel = TIM_LOCKLEVEL_OFF;
+  sBreakDeadTimeConfig.DeadTime = 0;
+  sBreakDeadTimeConfig.BreakState = TIM_BREAK_DISABLE;
+  sBreakDeadTimeConfig.BreakPolarity = TIM_BREAKPOLARITY_HIGH;
+  sBreakDeadTimeConfig.AutomaticOutput = TIM_AUTOMATICOUTPUT_DISABLE;
+  if (HAL_TIMEx_ConfigBreakDeadTime(&htim1, &sBreakDeadTimeConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM1_Init 2 */
+
+  /* USER CODE END TIM1_Init 2 */
+  HAL_TIM_MspPostInit(&htim1);
+
+}
+
+/**
   * @brief TIM2 Initialization Function
   * @param None
   * @retval None
@@ -422,9 +523,9 @@ static void MX_TIM2_Init(void)
 
   /* USER CODE END TIM2_Init 1 */
   htim2.Instance = TIM2;
-  htim2.Init.Prescaler = 49;
+  htim2.Init.Prescaler = 0;
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim2.Init.Period = 19200;
+  htim2.Init.Period = 23999;
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
@@ -447,18 +548,15 @@ static void MX_TIM2_Init(void)
     Error_Handler();
   }
   sConfigOC.OCMode = TIM_OCMODE_PWM1;
-  sConfigOC.Pulse = 1920;
+  sConfigOC.Pulse = 6000;
   sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
   sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
   if (HAL_TIM_PWM_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
   {
     Error_Handler();
   }
+  sConfigOC.Pulse = 600;
   if (HAL_TIM_PWM_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_3) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  if (HAL_TIM_PWM_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_4) != HAL_OK)
   {
     Error_Handler();
   }
@@ -483,15 +581,14 @@ static void MX_TIM3_Init(void)
 
   TIM_ClockConfigTypeDef sClockSourceConfig = {0};
   TIM_MasterConfigTypeDef sMasterConfig = {0};
-  TIM_OC_InitTypeDef sConfigOC = {0};
 
   /* USER CODE BEGIN TIM3_Init 1 */
 
   /* USER CODE END TIM3_Init 1 */
   htim3.Instance = TIM3;
-  htim3.Init.Prescaler = 49;
+  htim3.Init.Prescaler = 0;
   htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim3.Init.Period = 19200;
+  htim3.Init.Period = 65535;
   htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim3) != HAL_OK)
@@ -503,32 +600,15 @@ static void MX_TIM3_Init(void)
   {
     Error_Handler();
   }
-  if (HAL_TIM_PWM_Init(&htim3) != HAL_OK)
-  {
-    Error_Handler();
-  }
   sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
   sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
   if (HAL_TIMEx_MasterConfigSynchronization(&htim3, &sMasterConfig) != HAL_OK)
   {
     Error_Handler();
   }
-  sConfigOC.OCMode = TIM_OCMODE_PWM1;
-  sConfigOC.Pulse = 1920;
-  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
-  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
-  if (HAL_TIM_PWM_ConfigChannel(&htim3, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  if (HAL_TIM_PWM_ConfigChannel(&htim3, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
-  {
-    Error_Handler();
-  }
   /* USER CODE BEGIN TIM3_Init 2 */
 
   /* USER CODE END TIM3_Init 2 */
-  HAL_TIM_MspPostInit(&htim3);
 
 }
 
@@ -636,103 +716,91 @@ void send_debug_message(char *name, uint8_t name_length, uint8_t id, int16_t val
 void set_PWM0_duty(uint16_t duty_cycle_hundredths)
 {
   uint32_t pulse = (19200UL * duty_cycle_hundredths) / 10000UL;
-  __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, pulse);
+  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 19200UL - pulse);
 }
 void set_PWM1_duty(uint16_t duty_cycle_hundredths)
 {
   uint32_t pulse = (19200UL * duty_cycle_hundredths) / 10000UL;
-  __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3, pulse);
+  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 19200UL - pulse);
 }
 void set_PWM2_duty(uint16_t duty_cycle_hundredths)
 {
   uint32_t pulse = (19200UL * duty_cycle_hundredths) / 10000UL;
-  __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_4, pulse);
+  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, 19200UL - pulse);
 }
-void set_PWM3_duty(uint16_t duty_cycle_hundredths)
+void set_PWM3_duty(uint16_t pulse)
 {
-  uint32_t pulse = (19200UL * duty_cycle_hundredths) / 10000UL;
-  __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, pulse);
+  __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, (uint32_t) pulse);
 }
-void set_PWM4_duty(uint16_t duty_cycle_hundredths)
+void set_PWM4_duty(uint16_t pulse)
 {
-  uint32_t pulse = (19200UL * duty_cycle_hundredths) / 10000UL;
-  __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_2, pulse);
+  __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3, (uint32_t) pulse);
 }
-uint16_t get_PWM0_duty()
-{
-  uint16_t pulse = (10000UL * __HAL_TIM_GET_COMPARE(&htim2, TIM_CHANNEL_2)) / 19200UL;
-  return pulse;
-}
-uint16_t get_PWM1_duty()
-{
-  uint16_t pulse = (10000UL * __HAL_TIM_GET_COMPARE(&htim2, TIM_CHANNEL_3)) / 19200UL;
-  return pulse;
-}
-uint16_t get_PWM2_duty()
-{
-  uint16_t pulse = (10000UL * __HAL_TIM_GET_COMPARE(&htim2, TIM_CHANNEL_4)) / 19200UL;
-  return pulse;
-}
-uint16_t get_PWM3_duty()
-{
-  uint16_t pulse = (10000UL * __HAL_TIM_GET_COMPARE(&htim3, TIM_CHANNEL_1)) / 19200UL;
-  return pulse;
-}
-uint16_t get_PWM4_duty()
-{
-  uint16_t pulse = (10000UL * __HAL_TIM_GET_COMPARE(&htim3, TIM_CHANNEL_2)) / 19200UL;
-  return pulse;
-}
+//uint16_t get_PWM0_duty()
+//{
+//  uint16_t pulse = (10000UL * __HAL_TIM_GET_COMPARE(&htim2, TIM_CHANNEL_2)) / 19200UL;
+//  return pulse;
+//}
+//uint16_t get_PWM1_duty()
+//{
+//  uint16_t pulse = (10000UL * __HAL_TIM_GET_COMPARE(&htim2, TIM_CHANNEL_3)) / 19200UL;
+//  return pulse;
+//}
+//uint16_t get_PWM2_duty()
+//{
+//  uint16_t pulse = (10000UL * __HAL_TIM_GET_COMPARE(&htim2, TIM_CHANNEL_4)) / 19200UL;
+//  return pulse;
+//}
+//uint16_t get_PWM3_duty()
+//{
+//  uint16_t pulse = (10000UL * __HAL_TIM_GET_COMPARE(&htim3, TIM_CHANNEL_1)) / 19200UL;
+//  return pulse;
+//}
+//uint16_t get_PWM4_duty()
+//{
+//  uint16_t pulse = (10000UL * __HAL_TIM_GET_COMPARE(&htim3, TIM_CHANNEL_2)) / 19200UL;
+//  return pulse;
+//}
 
 void update_PWM() {
 
-  // SWASHPLATE SERVOS
-  current_pwm_channels[ACTUATOR_SWASH_LEFT] =
-          (  (ACTUATOR_SWASH_LP_PARAM - 1) * current_pwm_channels[ACTUATOR_SWASH_LEFT]
-           +                            1  *  target_PWM_channels[ACTUATOR_SWASH_LEFT]) / ACTUATOR_SWASH_LP_PARAM;
-  current_pwm_channels[ACTUATOR_SWASH_RIGHT] =
-          (  (ACTUATOR_SWASH_LP_PARAM - 1) * current_pwm_channels[ACTUATOR_SWASH_RIGHT]
-           +                            1  *  target_PWM_channels[ACTUATOR_SWASH_RIGHT]) / ACTUATOR_SWASH_LP_PARAM;
-  current_pwm_channels[ACTUATOR_SWASH_AFT] =
-          (   (ACTUATOR_SWASH_LP_PARAM - 1) * current_pwm_channels[ACTUATOR_SWASH_AFT]
-           +                             1  *  target_PWM_channels[ACTUATOR_SWASH_AFT]) / ACTUATOR_SWASH_LP_PARAM;
 
-  // MAIN ROTOR THROTTLE
-  current_pwm_channels[ACTUATOR_MAIN_ROTOR] =
-          (  (ACTUATOR_MAIN_LP_PARAM - 1) * current_pwm_channels[ACTUATOR_MAIN_ROTOR]
-           +                           1  *  target_PWM_channels[ACTUATOR_MAIN_ROTOR]) / ACTUATOR_MAIN_LP_PARAM;
-
-  // TAIL ROTOR THROTTLE
-  current_pwm_channels[ACTUATOR_TAIL_ROTOR] =
-          (  ( ACTUATOR_TAIL_LP_PARAM - 1) * current_pwm_channels[ACTUATOR_TAIL_ROTOR]
-           +                            1  *  target_PWM_channels[ACTUATOR_TAIL_ROTOR]) / ACTUATOR_TAIL_LP_PARAM;
 
   // LIMITS
   for (uint8_t i = 0; i < PWM_CHANNEL_COUNT; i++) {
-    if (current_pwm_channels[i] < PWM_MIN) { current_pwm_channels[i] = PWM_MIN; }
-    if (current_pwm_channels[i] > PWM_MAX) { current_pwm_channels[i] = PWM_MAX; }
+    if (output_actuator_channels[i] < PWM_MIN) { output_actuator_channels[i] = PWM_MIN; }
+    if (output_actuator_channels[i] > PWM_MAX) { output_actuator_channels[i] = PWM_MAX; }
   }
 
   // SWASHPLATE SERVOS
-  set_PWM0_duty(current_pwm_channels[0]);
-  set_PWM1_duty(current_pwm_channels[1]);
-  set_PWM2_duty(current_pwm_channels[2]);
+  set_PWM0_duty(output_actuator_channels[ACTUATOR_SWASH_LEFT]);
+  set_PWM1_duty(output_actuator_channels[ACTUATOR_SWASH_RIGHT]);
+  set_PWM2_duty(output_actuator_channels[ACTUATOR_SWASH_AFT]);
 
-  // ROTOR THROTTLES
+}
+
+void update_Oneshot125() {
+
+  // LIMITS
+  for (uint8_t i = PWM_CHANNEL_COUNT - 1; i < OS1_CHANNEL_COUNT; i++) {
+    if (output_actuator_channels[i] < ONESHOT125_MIN) { output_actuator_channels[i] = ONESHOT125_MIN; }
+    if (output_actuator_channels[i] > ONESHOT125_MAX) { output_actuator_channels[i] = ONESHOT125_MAX; }
+  }
+
   if (armed) {
-    set_PWM3_duty(current_pwm_channels[3]);
-    set_PWM4_duty(current_pwm_channels[4]);
+    set_PWM3_duty(output_actuator_channels[ACTUATOR_MAIN_ROTOR]);
+    set_PWM4_duty(output_actuator_channels[ACTUATOR_TAIL_ROTOR]);
   } else {
-    set_PWM3_duty(PWM_DISARMED);
-    set_PWM4_duty(PWM_DISARMED);
+    set_PWM3_duty(ONESHOT125_DISARMED);
+    set_PWM4_duty(ONESHOT125_DISARMED);
   }
 }
 
 uint8_t ready_to_arm() {
 
-//  if (get_PWM3_duty() < PWM_DISARMED + 50) {
-//    arm_blocked = true;
-//  }
+  if (received_crsf_channels[CRSF_CHANNEL_THROTTLE] > CRSF_MIN + 50) {
+    arm_blocked = true;
+  }
 
   if (radio_link_stats_last_update > HAL_GetTick() || radio_link_stats_last_update + MAX_RADIO_STATS_AGE < HAL_GetTick()) {
     arm_blocked = true;
@@ -747,17 +815,19 @@ uint8_t ready_to_arm() {
 
 void update_channels() {
   // AUXILIARY ACTIONS
-  if (received_crsf_channels[CHANNEL_PREARM] < CRSF_MID) {
+  if (received_crsf_channels[CRSF_CHANNEL_PREARM] < CRSF_MID) {
     pre_armed = false;
   }
 
-  if (received_crsf_channels[CHANNEL_ARM] <= CRSF_MID) {
+  if (received_crsf_channels[CRSF_CHANNEL_ARM] <= CRSF_MID) {
     if (armed) {
       armed = false;
       previous_rotor_throttle = -NORM_RANGE;
+      current_actuator_channels[ACTUATOR_MAIN_ROTOR] = -NORM_RANGE;
+      current_actuator_channels[ACTUATOR_TAIL_ROTOR] = -NORM_RANGE;
       disable_status_led();
     } else {
-      if (received_crsf_channels[CHANNEL_PREARM] > CRSF_MID) {
+      if (received_crsf_channels[CRSF_CHANNEL_PREARM] > CRSF_MID) {
         pre_armed = true;
       }
       if (arm_blocked) {
@@ -765,26 +835,29 @@ void update_channels() {
         ready_to_arm();
       }
     }
-  } else if (received_crsf_channels[CHANNEL_ARM] > CRSF_MID) {
+  } else if (received_crsf_channels[CRSF_CHANNEL_ARM] > CRSF_MID) {
     if (!armed && pre_armed && ready_to_arm()) {
+      previous_rotor_throttle = -NORM_RANGE;
+      current_actuator_channels[ACTUATOR_MAIN_ROTOR] = -NORM_RANGE;
+      current_actuator_channels[ACTUATOR_TAIL_ROTOR] = -NORM_RANGE;
       armed = true;
       enable_status_led();
     }
   }
 
-  if        (   received_crsf_channels[CHANNEL_FLIGHT_MODE] <= CRSF_ONE_THIRD) {
+  if        (   received_crsf_channels[CRSF_CHANNEL_FLIGHT_MODE] <= CRSF_ONE_THIRD) {
     if (flight_mode != FLIGHT_MODE_DIRECT) {
       flight_mode = FLIGHT_MODE_DIRECT;
       add_blinks(1);
     }
-  } else if (   received_crsf_channels[CHANNEL_FLIGHT_MODE] >  CRSF_ONE_THIRD
-             && received_crsf_channels[CHANNEL_FLIGHT_MODE] <= CRSF_TWO_THIRD) {
+  } else if (   received_crsf_channels[CRSF_CHANNEL_FLIGHT_MODE] >  CRSF_ONE_THIRD
+             && received_crsf_channels[CRSF_CHANNEL_FLIGHT_MODE] <= CRSF_TWO_THIRD) {
     if (flight_mode != FLIGHT_MODE_RATE) {
       // NOT YET IMPLEMENTED
       add_blinks(5);
       flight_mode = FLIGHT_MODE_RATE;
     }
-  } else if (   received_crsf_channels[CHANNEL_FLIGHT_MODE] >  CRSF_TWO_THIRD) {
+  } else if (   received_crsf_channels[CRSF_CHANNEL_FLIGHT_MODE] >  CRSF_TWO_THIRD) {
     if (flight_mode != FLIGHT_MODE_ANGLE) {
       // NOT YET IMPLEMENTED
       add_blinks(5);
@@ -792,12 +865,12 @@ void update_channels() {
     }
   }
 
-  if        (received_crsf_channels[CHANNEL_PIT_MODE] <= CRSF_MID) {
+  if        (received_crsf_channels[CRSF_CHANNEL_PIT_MODE] <= CRSF_MID) {
     if (pit_mode != PIT_MODE_OFF) {
       pit_mode = PIT_MODE_OFF;
       add_blinks(2);
     }
-  } else if (received_crsf_channels[CHANNEL_PIT_MODE] > CRSF_MID) {
+  } else if (received_crsf_channels[CRSF_CHANNEL_PIT_MODE] > CRSF_MID) {
     if (pit_mode != PIT_MODE_ON) {
       pit_mode = PIT_MODE_ON;
       add_blinks(2);
@@ -810,50 +883,50 @@ void update_channels() {
   // INPUTS
   int16_t mixer_input_channels[MIXER_INPUT_CHANNEL_COUNT] = {0};
 
-  mixer_input_channels[CHANNEL_LON_CYC] =
-          (int16_t) (normalize_crsf(received_crsf_channels[CHANNEL_LON_CYC]) + ROTOR_LON_TRIM);
-  mixer_input_channels[CHANNEL_LAT_CYC] =
-          (int16_t) (normalize_crsf(received_crsf_channels[CHANNEL_LAT_CYC]) + ROTOR_LAT_TRIM);
-  mixer_input_channels[CHANNEL_COLLECTIVE] = (int16_t) (normalize_crsf(received_crsf_channels[CHANNEL_COLLECTIVE]));
-  mixer_input_channels[CHANNEL_PEDALS] = (int16_t) (normalize_crsf(received_crsf_channels[CHANNEL_PEDALS]));
-  mixer_input_channels[CHANNEL_THROTTLE] = (int16_t) (normalize_crsf(received_crsf_channels[CHANNEL_THROTTLE]));
+  mixer_input_channels[INPUT_CHANNEL_LON_CYC] =
+          (int16_t) (-1 * (normalize_crsf(received_crsf_channels[CRSF_CHANNEL_LON_CYC]) + ROTOR_LON_TRIM));
+  mixer_input_channels[INPUT_CHANNEL_LAT_CYC] =
+          (int16_t)       (normalize_crsf(received_crsf_channels[CRSF_CHANNEL_LAT_CYC]) + ROTOR_LAT_TRIM);
+  mixer_input_channels[INPUT_CHANNEL_COLLECTIVE] = (int16_t) (normalize_crsf(received_crsf_channels[CRSF_CHANNEL_COLLECTIVE]));
+  mixer_input_channels[INPUT_CHANNEL_PEDALS] = (int16_t) (normalize_crsf(received_crsf_channels[CRSF_CHANNEL_PEDALS]));
+  mixer_input_channels[INPUT_CHANNEL_THROTTLE] = (int16_t) (normalize_crsf(received_crsf_channels[CRSF_CHANNEL_THROTTLE]));
 
   #define SIN_60(x)  ((x) - (x)/8 - (x)/128 - (x)/512)   //  1000*sin(60) = 866.02... ~= 865
 
-  mixer_input_channels[CHANNEL_LAT_CYC] = SIN_60(mixer_input_channels[CHANNEL_LAT_CYC]);
+  mixer_input_channels[INPUT_CHANNEL_LAT_CYC] = SIN_60(mixer_input_channels[INPUT_CHANNEL_LAT_CYC]);
 
   int16_t mixer_output_channels[ACTUATOR_CHANNEL_COUNT] = {0};
-  int16_t lon_cyc_half = (int16_t) (mixer_input_channels[CHANNEL_LON_CYC] / 2);
+  int16_t lon_cyc_half = (int16_t) (mixer_input_channels[INPUT_CHANNEL_LON_CYC] / 2);
 
   // SWASH PLATE
   mixer_output_channels[ACTUATOR_SWASH_LEFT] = (int16_t)
-          (  mixer_input_channels[CHANNEL_COLLECTIVE]
+          (  mixer_input_channels[INPUT_CHANNEL_COLLECTIVE]
            + lon_cyc_half
-           + mixer_input_channels[CHANNEL_LAT_CYC]);
+           + mixer_input_channels[INPUT_CHANNEL_LAT_CYC]);
 
-  mixer_output_channels[ACTUATOR_SWASH_RIGHT] = (int16_t)
-          (  mixer_input_channels[CHANNEL_COLLECTIVE]
+  mixer_output_channels[ACTUATOR_SWASH_RIGHT] = (int16_t) (-1 *
+          (  mixer_input_channels[INPUT_CHANNEL_COLLECTIVE]
            + lon_cyc_half
-           - mixer_input_channels[CHANNEL_LAT_CYC]);
+           - mixer_input_channels[INPUT_CHANNEL_LAT_CYC]));
 
   mixer_output_channels[ACTUATOR_SWASH_AFT] = (int16_t)
-          (  mixer_input_channels[CHANNEL_COLLECTIVE]
-           - mixer_input_channels[CHANNEL_LON_CYC]);
+          (  mixer_input_channels[INPUT_CHANNEL_COLLECTIVE]
+           - mixer_input_channels[INPUT_CHANNEL_LON_CYC]);
 
   // ROTOR THROTTLE
-  if (mixer_input_channels[CHANNEL_THROTTLE] > previous_rotor_throttle + ACTUATOR_MAIN_MAX_DELTA) {
-    mixer_input_channels[CHANNEL_THROTTLE] = (int16_t) (previous_rotor_throttle + ACTUATOR_MAIN_MAX_DELTA);
+  if (mixer_input_channels[INPUT_CHANNEL_THROTTLE] > previous_rotor_throttle + ACTUATOR_MAIN_MAX_DELTA) {
+    mixer_input_channels[INPUT_CHANNEL_THROTTLE] = (int16_t) (previous_rotor_throttle + ACTUATOR_MAIN_MAX_DELTA);
   }
-  if (mixer_input_channels[CHANNEL_THROTTLE] < previous_rotor_throttle - ACTUATOR_MAIN_MAX_DELTA) {
-    mixer_input_channels[CHANNEL_THROTTLE] = (int16_t) (previous_rotor_throttle - ACTUATOR_MAIN_MAX_DELTA);
+  if (mixer_input_channels[INPUT_CHANNEL_THROTTLE] < previous_rotor_throttle - ACTUATOR_MAIN_MAX_DELTA) {
+    mixer_input_channels[INPUT_CHANNEL_THROTTLE] = (int16_t) (previous_rotor_throttle - ACTUATOR_MAIN_MAX_DELTA);
   }
-  previous_rotor_throttle = mixer_input_channels[CHANNEL_THROTTLE];
+  previous_rotor_throttle = mixer_input_channels[INPUT_CHANNEL_THROTTLE];
 
-  mixer_output_channels[ACTUATOR_MAIN_ROTOR] = mixer_input_channels[CHANNEL_THROTTLE];
+  mixer_output_channels[ACTUATOR_MAIN_ROTOR] = mixer_input_channels[INPUT_CHANNEL_THROTTLE];
 
   mixer_output_channels[ACTUATOR_TAIL_ROTOR] = (int16_t)
-          (  mixer_input_channels[CHANNEL_THROTTLE] / ROTOR_MAIN_TO_PEDAL_INV_GAIN
-           + mixer_input_channels[CHANNEL_PEDALS]
+          (  mixer_input_channels[INPUT_CHANNEL_THROTTLE] / ROTOR_MAIN_TO_PEDAL_INV_GAIN
+           - mixer_input_channels[INPUT_CHANNEL_PEDALS]
            + ROTOR_PEDAL_TRIM);
 
   // LIMITS
@@ -861,6 +934,31 @@ void update_channels() {
     if (mixer_output_channels[i] > 1000) { mixer_output_channels[i] = 1000; }
     if (mixer_output_channels[i] < -1000) { mixer_output_channels[i] = -1000; }
   }
+
+  // SWASHPLATE SERVOS
+  // output = ((G-1 * old) + 1 * new) / G  <-- Low pass filter
+  current_actuator_channels[ACTUATOR_SWASH_LEFT] = (int16_t)
+          ((  (ACTUATOR_SWASH_LP_PARAM - 1) * current_actuator_channels[ACTUATOR_SWASH_LEFT]
+            +                            1  *     mixer_output_channels[ACTUATOR_SWASH_LEFT])
+                                                                                  / ACTUATOR_SWASH_LP_PARAM);
+  current_actuator_channels[ACTUATOR_SWASH_RIGHT] = (int16_t)
+          ((  (ACTUATOR_SWASH_LP_PARAM - 1) * current_actuator_channels[ACTUATOR_SWASH_RIGHT]
+            +                            1  *     mixer_output_channels[ACTUATOR_SWASH_RIGHT])
+                                                                                  / ACTUATOR_SWASH_LP_PARAM);
+  current_actuator_channels[ACTUATOR_SWASH_AFT] = (int16_t)
+          ((  (ACTUATOR_SWASH_LP_PARAM - 1) * current_actuator_channels[ACTUATOR_SWASH_AFT]
+            +                            1  *     mixer_output_channels[ACTUATOR_SWASH_AFT])
+                                                                                  / ACTUATOR_SWASH_LP_PARAM);
+
+  // MAIN ROTOR THROTTLE
+  current_actuator_channels[ACTUATOR_MAIN_ROTOR] = (int16_t)
+          ((  (ACTUATOR_MAIN_LP_PARAM - 1) * current_actuator_channels[ACTUATOR_MAIN_ROTOR]
+            +                           1  *     mixer_output_channels[ACTUATOR_MAIN_ROTOR]) / ACTUATOR_MAIN_LP_PARAM);
+
+  // TAIL ROTOR THROTTLE
+  current_actuator_channels[ACTUATOR_TAIL_ROTOR] = (int16_t)
+          ((  (ACTUATOR_TAIL_LP_PARAM - 1) * current_actuator_channels[ACTUATOR_TAIL_ROTOR]
+            +                           1  *     mixer_output_channels[ACTUATOR_TAIL_ROTOR]) / ACTUATOR_TAIL_LP_PARAM);
 
   // OUTPUTS
   switch (flight_mode) {
@@ -870,11 +968,11 @@ void update_channels() {
       // NOT YET IMPLEMENTED
     default:
     case FLIGHT_MODE_DIRECT:
-      target_PWM_channels[ACTUATOR_SWASH_LEFT]  = denormalize_pwm(mixer_output_channels[ACTUATOR_SWASH_LEFT]);
-      target_PWM_channels[ACTUATOR_SWASH_RIGHT] = denormalize_pwm(mixer_output_channels[ACTUATOR_SWASH_RIGHT]);
-      target_PWM_channels[ACTUATOR_SWASH_AFT]   = denormalize_pwm(mixer_output_channels[ACTUATOR_SWASH_AFT]);
-      target_PWM_channels[ACTUATOR_MAIN_ROTOR]  = denormalize_pwm(mixer_output_channels[ACTUATOR_MAIN_ROTOR]);
-      target_PWM_channels[ACTUATOR_TAIL_ROTOR]  = denormalize_pwm(mixer_output_channels[ACTUATOR_TAIL_ROTOR]);
+      output_actuator_channels[ACTUATOR_SWASH_LEFT]  = denormalize_pwm(current_actuator_channels[ACTUATOR_SWASH_LEFT]);
+      output_actuator_channels[ACTUATOR_SWASH_RIGHT] = denormalize_pwm(current_actuator_channels[ACTUATOR_SWASH_RIGHT]);
+      output_actuator_channels[ACTUATOR_SWASH_AFT]   = denormalize_pwm(current_actuator_channels[ACTUATOR_SWASH_AFT]);
+      output_actuator_channels[ACTUATOR_MAIN_ROTOR]  = denormalize_os1(current_actuator_channels[ACTUATOR_MAIN_ROTOR]);
+      output_actuator_channels[ACTUATOR_TAIL_ROTOR]  = denormalize_os1(current_actuator_channels[ACTUATOR_TAIL_ROTOR]);
       break;
   }
 }

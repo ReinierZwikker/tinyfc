@@ -32,3 +32,7 @@ uint16_t denormalize_crsf(int16_t norm_value) {
 uint16_t denormalize_pwm(int16_t norm_value) {
   return (uint16_t) (PWM_MID + (norm_value * (PWM_MID - PWM_MIN)) / NORM_RANGE);
 }
+
+uint16_t denormalize_os1(int16_t norm_value) {
+  return (uint16_t) (ONESHOT125_MID + (norm_value * (ONESHOT125_MID - ONESHOT125_MIN)) / NORM_RANGE);
+}

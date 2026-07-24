@@ -936,19 +936,26 @@ void update_channels() {
   }
 
   // SWASHPLATE SERVOS
+
+  // With low-pass
   // output = ((G-1 * old) + 1 * new) / G  <-- Low pass filter
-  current_actuator_channels[ACTUATOR_SWASH_LEFT] = (int16_t)
-          ((  (ACTUATOR_SWASH_LP_PARAM - 1) * current_actuator_channels[ACTUATOR_SWASH_LEFT]
-            +                            1  *     mixer_output_channels[ACTUATOR_SWASH_LEFT])
-                                                                                  / ACTUATOR_SWASH_LP_PARAM);
-  current_actuator_channels[ACTUATOR_SWASH_RIGHT] = (int16_t)
-          ((  (ACTUATOR_SWASH_LP_PARAM - 1) * current_actuator_channels[ACTUATOR_SWASH_RIGHT]
-            +                            1  *     mixer_output_channels[ACTUATOR_SWASH_RIGHT])
-                                                                                  / ACTUATOR_SWASH_LP_PARAM);
-  current_actuator_channels[ACTUATOR_SWASH_AFT] = (int16_t)
-          ((  (ACTUATOR_SWASH_LP_PARAM - 1) * current_actuator_channels[ACTUATOR_SWASH_AFT]
-            +                            1  *     mixer_output_channels[ACTUATOR_SWASH_AFT])
-                                                                                  / ACTUATOR_SWASH_LP_PARAM);
+  // current_actuator_channels[ACTUATOR_SWASH_LEFT] = (int16_t)
+  //         ((  (ACTUATOR_SWASH_LP_PARAM - 1) * current_actuator_channels[ACTUATOR_SWASH_LEFT]
+  //           +                            1  *     mixer_output_channels[ACTUATOR_SWASH_LEFT])
+  //                                                                                 / ACTUATOR_SWASH_LP_PARAM);
+  // current_actuator_channels[ACTUATOR_SWASH_RIGHT] = (int16_t)
+  //         ((  (ACTUATOR_SWASH_LP_PARAM - 1) * current_actuator_channels[ACTUATOR_SWASH_RIGHT]
+  //           +                            1  *     mixer_output_channels[ACTUATOR_SWASH_RIGHT])
+  //                                                                                 / ACTUATOR_SWASH_LP_PARAM);
+  // current_actuator_channels[ACTUATOR_SWASH_AFT] = (int16_t)
+  //         ((  (ACTUATOR_SWASH_LP_PARAM - 1) * current_actuator_channels[ACTUATOR_SWASH_AFT]
+  //           +                            1  *     mixer_output_channels[ACTUATOR_SWASH_AFT])
+  //                                                                                 / ACTUATOR_SWASH_LP_PARAM);
+
+  // Direct
+  current_actuator_channels[ACTUATOR_SWASH_LEFT] = mixer_output_channels[ACTUATOR_SWASH_LEFT];
+  current_actuator_channels[ACTUATOR_SWASH_RIGHT] = mixer_output_channels[ACTUATOR_SWASH_RIGHT];
+  current_actuator_channels[ACTUATOR_SWASH_AFT] = mixer_output_channels[ACTUATOR_SWASH_AFT];
 
   // MAIN ROTOR THROTTLE
   current_actuator_channels[ACTUATOR_MAIN_ROTOR] = (int16_t)
@@ -956,9 +963,10 @@ void update_channels() {
             +                           1  *     mixer_output_channels[ACTUATOR_MAIN_ROTOR]) / ACTUATOR_MAIN_LP_PARAM);
 
   // TAIL ROTOR THROTTLE
-  current_actuator_channels[ACTUATOR_TAIL_ROTOR] = (int16_t)
-          ((  (ACTUATOR_TAIL_LP_PARAM - 1) * current_actuator_channels[ACTUATOR_TAIL_ROTOR]
-            +                           1  *     mixer_output_channels[ACTUATOR_TAIL_ROTOR]) / ACTUATOR_TAIL_LP_PARAM);
+  // current_actuator_channels[ACTUATOR_TAIL_ROTOR] = (int16_t)
+  //         ((  (ACTUATOR_TAIL_LP_PARAM - 1) * current_actuator_channels[ACTUATOR_TAIL_ROTOR]
+  //           +                           1  *     mixer_output_channels[ACTUATOR_TAIL_ROTOR]) / ACTUATOR_TAIL_LP_PARAM);
+  current_actuator_channels[ACTUATOR_TAIL_ROTOR] = mixer_output_channels[ACTUATOR_TAIL_ROTOR];
 
   // OUTPUTS
   switch (flight_mode) {

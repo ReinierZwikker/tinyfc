@@ -47,7 +47,9 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
     Core/Inc/main_conf.h
+    Core/Inc/tinyfc_types.h
     Core/Inc/utils.h Core/Src/utils.c
+    Core/Inc/heli_mixer.h Core/Src/heli_mixer.c
     Libraries/crsf-c/crsf_parser.h Libraries/crsf-c/crsf.h Libraries/crsf-c/crsf.c
 )
 

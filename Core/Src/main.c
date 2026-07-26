@@ -27,15 +27,38 @@
 #include <stdbool.h>
 
 #include "main_conf.h"
+#include "tinyfc_types.h"
 #include "crsf.h"
 #include "crsf_parser.h"
+#include "heli_mixer.h"
 #include "usbd_cdc_if.h"
 #include "utils.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
+typedef struct {
+  uint8_t buffer[UART3_RX_BUFFER_SIZE];
+  volatile uint16_t head;
+  volatile uint16_t tail;
+} uart_buffer_t;
 
+enum pit_mode_t {
+  PIT_MODE_OFF = 0,
+  PIT_MODE_ON = 1,
+} pit_mode = PIT_MODE_OFF;
+
+enum led_state_t {
+  LED_STATE_OFF = 0,
+  LED_STATE_ON = 1,
+} status_led_state = LED_STATE_OFF;
+
+enum led_blink_state_t {
+  LED_BLINK_WAITING = 0,
+  LED_BLINK_PRE_OFF = 1,
+  LED_BLINK_ON = 2,
+  LED_BLINK_POST_OFF = 3,
+} led_blink_state = LED_BLINK_WAITING;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -67,42 +90,19 @@ crsf_frame_link_stats_t radio_link_stats;
 uint32_t radio_link_stats_last_update = UINT32_MAX;
 
 uint16_t received_crsf_channels[CRSF_CHANNEL_COUNT];
-
-int16_t current_actuator_channels[ACTUATOR_CHANNEL_COUNT];
-
+ int16_t mixer_input_channels[MIXER_INPUT_CHANNEL_COUNT];
 uint16_t output_actuator_channels[ACTUATOR_CHANNEL_COUNT];
 
 int16_t previous_rotor_throttle = -NORM_RANGE;
+
+enum flight_mode_t flight_mode = FLIGHT_MODE_DIRECT;
 
 uint8_t armed = false;
 uint8_t pre_armed = false;
 uint8_t arm_blocked = true;
 
-enum flight_mode_t {
-  FLIGHT_MODE_DIRECT = 0,
-  FLIGHT_MODE_RATE = 1,
-  FLIGHT_MODE_ANGLE = 2,
-  FLIGHT_MODE_POSITION = 3
-} flight_mode = FLIGHT_MODE_DIRECT;
-
-enum pit_mode_t {
-  PIT_MODE_OFF = 0,
-  PIT_MODE_ON = 1,
-} pit_mode = PIT_MODE_OFF;
-
-enum led_state_t {
-  LED_STATE_OFF = 0,
-  LED_STATE_ON = 1,
-} status_led_state = LED_STATE_OFF;
-
 uint8_t led_blinks = 0;
 uint32_t led_blink_time_next_change = 0;
-enum led_blink_state_t {
-  LED_BLINK_WAITING = 0,
-  LED_BLINK_PRE_OFF = 1,
-  LED_BLINK_ON = 2,
-  LED_BLINK_POST_OFF = 3,
-} led_blink_state = LED_BLINK_WAITING;
 
 /* USER CODE END PV */
 
@@ -206,14 +206,12 @@ int main(void)
   uint32_t last_pwm_update = HAL_GetTick();
 
   memset(received_crsf_channels, 0, sizeof(received_crsf_channels));
-  memset(current_actuator_channels, 0, sizeof(current_actuator_channels));
 
-  output_actuator_channels[ACTUATOR_SWASH_LEFT] = PWM_MID;
+  output_actuator_channels[ACTUATOR_SWASH_LEFT]  = PWM_MID;
   output_actuator_channels[ACTUATOR_SWASH_RIGHT] = PWM_MID;
-  output_actuator_channels[ACTUATOR_SWASH_AFT] = PWM_MID;
-  output_actuator_channels[ACTUATOR_MAIN_ROTOR] = ONESHOT125_DISARMED;
-  output_actuator_channels[ACTUATOR_TAIL_ROTOR] = ONESHOT125_DISARMED;
-
+  output_actuator_channels[ACTUATOR_SWASH_AFT]   = PWM_MID;
+  output_actuator_channels[ACTUATOR_MAIN_ROTOR]  = ONESHOT125_DISARMED;
+  output_actuator_channels[ACTUATOR_TAIL_ROTOR]  = ONESHOT125_DISARMED;
 
   uint8_t init_msg[] = "HELI FC Started up!\r\n";
   CDC_Transmit_FS(init_msg, sizeof(init_msg) - 1);
@@ -223,15 +221,16 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-
+  
+  // ReSharper disable once CppDFAEndlessLoop
   while (1) {
 
-    uint32_t current_tick = HAL_GetTick();
+    const uint32_t current_tick = HAL_GetTick();
 
     // Process received data from CSRF/UART3
     if (uart3_rb.head != uart3_rb.tail)
     {
-      uint16_t available = (uart3_rb.head - uart3_rb.tail + UART3_RX_BUFFER_SIZE) % UART3_RX_BUFFER_SIZE;
+      const uint16_t available = (uart3_rb.head - uart3_rb.tail + UART3_RX_BUFFER_SIZE) % UART3_RX_BUFFER_SIZE;
 
       if (available > 0)
       {
@@ -253,6 +252,7 @@ int main(void)
     // Handle periodic PWM update
     if (current_tick - last_pwm_update > PWM_UPDATE_PERIOD_MS) {
       last_pwm_update = current_tick;
+      update_mixer(mixer_input_channels, output_actuator_channels, flight_mode);
       update_PWM();
       update_Oneshot125();
     }
@@ -375,7 +375,6 @@ void SystemClock_Config(void)
 
 /**
   * @brief ADC1 Initialization Function
-  * @param None
   * @retval None
   */
 static void MX_ADC1_Init(void)
@@ -422,7 +421,6 @@ static void MX_ADC1_Init(void)
 
 /**
   * @brief TIM1 Initialization Function
-  * @param None
   * @retval None
   */
 static void MX_TIM1_Init(void)
@@ -505,7 +503,6 @@ static void MX_TIM1_Init(void)
 
 /**
   * @brief TIM2 Initialization Function
-  * @param None
   * @retval None
   */
 static void MX_TIM2_Init(void)
@@ -569,7 +566,6 @@ static void MX_TIM2_Init(void)
 
 /**
   * @brief TIM3 Initialization Function
-  * @param None
   * @retval None
   */
 static void MX_TIM3_Init(void)
@@ -614,7 +610,6 @@ static void MX_TIM3_Init(void)
 
 /**
   * @brief USART3 Initialization Function
-  * @param None
   * @retval None
   */
 static void MX_USART3_UART_Init(void)
@@ -647,7 +642,6 @@ static void MX_USART3_UART_Init(void)
 
 /**
   * @brief GPIO Initialization Function
-  * @param None
   * @retval None
   */
 static void MX_GPIO_Init(void)
@@ -695,12 +689,12 @@ void set_status_led(enum led_state_t state) {
     HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, GPIO_PIN_SET);
   }
 }
-void add_blinks(uint8_t blinks) {
+void add_blinks(const uint8_t blinks) {
   led_blinks += blinks;
 }
 
 // DEBUG USB
-void send_debug_message(char *name, uint8_t name_length, uint8_t id, int16_t value) {
+void send_debug_message(char *name, const uint8_t name_length, const uint8_t id, const int16_t value) {
   uint8_t *message = malloc(name_length + 2 + 3 + 3 + 5 + 2);
   sprintf((char *)message, "%s (%u): %d\r\n", name, id, value);
   CDC_Transmit_FS(message, name_length + 2 + 3 + 5 + 2);
@@ -713,26 +707,26 @@ void send_debug_message(char *name, uint8_t name_length, uint8_t id, int16_t val
   * @param duty_cycle_hundredths: Duty cycle in hundredths of a percent (e.g., 1000 = 10.00%)
   * @retval None
   */
-void set_PWM0_duty(uint16_t duty_cycle_hundredths)
+void set_PWM0_duty(const uint16_t duty_cycle_hundredths)
 {
-  uint32_t pulse = (19200UL * duty_cycle_hundredths) / 10000UL;
+  const uint32_t pulse = (19200UL * duty_cycle_hundredths) / 10000UL;
   __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 19200UL - pulse);
 }
-void set_PWM1_duty(uint16_t duty_cycle_hundredths)
+void set_PWM1_duty(const uint16_t duty_cycle_hundredths)
 {
-  uint32_t pulse = (19200UL * duty_cycle_hundredths) / 10000UL;
+  const uint32_t pulse = (19200UL * duty_cycle_hundredths) / 10000UL;
   __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 19200UL - pulse);
 }
-void set_PWM2_duty(uint16_t duty_cycle_hundredths)
+void set_PWM2_duty(const uint16_t duty_cycle_hundredths)
 {
-  uint32_t pulse = (19200UL * duty_cycle_hundredths) / 10000UL;
+  const uint32_t pulse = (19200UL * duty_cycle_hundredths) / 10000UL;
   __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, 19200UL - pulse);
 }
-void set_PWM3_duty(uint16_t pulse)
+void set_PWM3_duty(const uint16_t pulse)
 {
   __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, (uint32_t) pulse);
 }
-void set_PWM4_duty(uint16_t pulse)
+void set_PWM4_duty(const uint16_t pulse)
 {
   __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3, (uint32_t) pulse);
 }
@@ -763,8 +757,6 @@ void set_PWM4_duty(uint16_t pulse)
 //}
 
 void update_PWM() {
-
-
 
   // LIMITS
   for (uint8_t i = 0; i < PWM_CHANNEL_COUNT; i++) {
@@ -802,7 +794,8 @@ uint8_t ready_to_arm() {
     arm_blocked = true;
   }
 
-  if (radio_link_stats_last_update > HAL_GetTick() || radio_link_stats_last_update + MAX_RADIO_STATS_AGE < HAL_GetTick()) {
+  if (   radio_link_stats_last_update > HAL_GetTick()
+      || radio_link_stats_last_update + MAX_RADIO_STATS_AGE < HAL_GetTick()) {
     arm_blocked = true;
   } else {
     if (radio_link_stats.link_quality_percentage_uplink < MIN_LINK_QLY) {
@@ -822,9 +815,7 @@ void update_channels() {
   if (received_crsf_channels[CRSF_CHANNEL_ARM] <= CRSF_MID) {
     if (armed) {
       armed = false;
-      previous_rotor_throttle = -NORM_RANGE;
-      current_actuator_channels[ACTUATOR_MAIN_ROTOR] = -NORM_RANGE;
-      current_actuator_channels[ACTUATOR_TAIL_ROTOR] = -NORM_RANGE;
+      disarm_mixer();
       disable_status_led();
     } else {
       if (received_crsf_channels[CRSF_CHANNEL_PREARM] > CRSF_MID) {
@@ -837,9 +828,7 @@ void update_channels() {
     }
   } else if (received_crsf_channels[CRSF_CHANNEL_ARM] > CRSF_MID) {
     if (!armed && pre_armed && ready_to_arm()) {
-      previous_rotor_throttle = -NORM_RANGE;
-      current_actuator_channels[ACTUATOR_MAIN_ROTOR] = -NORM_RANGE;
-      current_actuator_channels[ACTUATOR_TAIL_ROTOR] = -NORM_RANGE;
+      reset_mixer();
       armed = true;
       enable_status_led();
     }
@@ -881,118 +870,24 @@ void update_channels() {
   // HELI MIXER
 
   // INPUTS
-  int16_t mixer_input_channels[MIXER_INPUT_CHANNEL_COUNT] = {0};
 
   mixer_input_channels[INPUT_CHANNEL_LON_CYC] =
-          (int16_t) (-1 * (normalize_crsf(received_crsf_channels[CRSF_CHANNEL_LON_CYC]) + ROTOR_LON_TRIM));
+  (int16_t) (-1 * (normalize_crsf(received_crsf_channels[CRSF_CHANNEL_LON_CYC]) + ROTOR_LON_TRIM));
   mixer_input_channels[INPUT_CHANNEL_LAT_CYC] =
-          (int16_t)       (normalize_crsf(received_crsf_channels[CRSF_CHANNEL_LAT_CYC]) + ROTOR_LAT_TRIM);
+  (int16_t)       (normalize_crsf(received_crsf_channels[CRSF_CHANNEL_LAT_CYC]) + ROTOR_LAT_TRIM);
   mixer_input_channels[INPUT_CHANNEL_COLLECTIVE] = (int16_t) (normalize_crsf(received_crsf_channels[CRSF_CHANNEL_COLLECTIVE]));
   mixer_input_channels[INPUT_CHANNEL_PEDALS] = (int16_t) (normalize_crsf(received_crsf_channels[CRSF_CHANNEL_PEDALS]));
   mixer_input_channels[INPUT_CHANNEL_THROTTLE] = (int16_t) (normalize_crsf(received_crsf_channels[CRSF_CHANNEL_THROTTLE]));
-
-  #define SIN_60(x)  ((x) - (x)/8 - (x)/128 - (x)/512)   //  1000*sin(60) = 866.02... ~= 865
-
-  mixer_input_channels[INPUT_CHANNEL_LAT_CYC] = SIN_60(mixer_input_channels[INPUT_CHANNEL_LAT_CYC]);
-
-  int16_t mixer_output_channels[ACTUATOR_CHANNEL_COUNT] = {0};
-  int16_t lon_cyc_half = (int16_t) (mixer_input_channels[INPUT_CHANNEL_LON_CYC] / 2);
-
-  // SWASH PLATE
-  mixer_output_channels[ACTUATOR_SWASH_LEFT] = (int16_t)
-          (  mixer_input_channels[INPUT_CHANNEL_COLLECTIVE]
-           + lon_cyc_half
-           + mixer_input_channels[INPUT_CHANNEL_LAT_CYC]);
-
-  mixer_output_channels[ACTUATOR_SWASH_RIGHT] = (int16_t) (-1 *
-          (  mixer_input_channels[INPUT_CHANNEL_COLLECTIVE]
-           + lon_cyc_half
-           - mixer_input_channels[INPUT_CHANNEL_LAT_CYC]));
-
-  mixer_output_channels[ACTUATOR_SWASH_AFT] = (int16_t)
-          (  mixer_input_channels[INPUT_CHANNEL_COLLECTIVE]
-           - mixer_input_channels[INPUT_CHANNEL_LON_CYC]);
-
-  // ROTOR THROTTLE
-  if (mixer_input_channels[INPUT_CHANNEL_THROTTLE] > previous_rotor_throttle + ACTUATOR_MAIN_MAX_DELTA) {
-    mixer_input_channels[INPUT_CHANNEL_THROTTLE] = (int16_t) (previous_rotor_throttle + ACTUATOR_MAIN_MAX_DELTA);
-  }
-  if (mixer_input_channels[INPUT_CHANNEL_THROTTLE] < previous_rotor_throttle - ACTUATOR_MAIN_MAX_DELTA) {
-    mixer_input_channels[INPUT_CHANNEL_THROTTLE] = (int16_t) (previous_rotor_throttle - ACTUATOR_MAIN_MAX_DELTA);
-  }
-  previous_rotor_throttle = mixer_input_channels[INPUT_CHANNEL_THROTTLE];
-
-  mixer_output_channels[ACTUATOR_MAIN_ROTOR] = mixer_input_channels[INPUT_CHANNEL_THROTTLE];
-
-  mixer_output_channels[ACTUATOR_TAIL_ROTOR] = (int16_t)
-          (  mixer_input_channels[INPUT_CHANNEL_THROTTLE] / ROTOR_MAIN_TO_PEDAL_INV_GAIN
-           - mixer_input_channels[INPUT_CHANNEL_PEDALS]
-           + ROTOR_PEDAL_TRIM);
-
-  // LIMITS
-  for (uint8_t i = 0; i < ACTUATOR_CHANNEL_COUNT; i++) {
-    if (mixer_output_channels[i] > 1000) { mixer_output_channels[i] = 1000; }
-    if (mixer_output_channels[i] < -1000) { mixer_output_channels[i] = -1000; }
-  }
-
-  // SWASHPLATE SERVOS
-
-  // With low-pass
-  // output = ((G-1 * old) + 1 * new) / G  <-- Low pass filter
-  // current_actuator_channels[ACTUATOR_SWASH_LEFT] = (int16_t)
-  //         ((  (ACTUATOR_SWASH_LP_PARAM - 1) * current_actuator_channels[ACTUATOR_SWASH_LEFT]
-  //           +                            1  *     mixer_output_channels[ACTUATOR_SWASH_LEFT])
-  //                                                                                 / ACTUATOR_SWASH_LP_PARAM);
-  // current_actuator_channels[ACTUATOR_SWASH_RIGHT] = (int16_t)
-  //         ((  (ACTUATOR_SWASH_LP_PARAM - 1) * current_actuator_channels[ACTUATOR_SWASH_RIGHT]
-  //           +                            1  *     mixer_output_channels[ACTUATOR_SWASH_RIGHT])
-  //                                                                                 / ACTUATOR_SWASH_LP_PARAM);
-  // current_actuator_channels[ACTUATOR_SWASH_AFT] = (int16_t)
-  //         ((  (ACTUATOR_SWASH_LP_PARAM - 1) * current_actuator_channels[ACTUATOR_SWASH_AFT]
-  //           +                            1  *     mixer_output_channels[ACTUATOR_SWASH_AFT])
-  //                                                                                 / ACTUATOR_SWASH_LP_PARAM);
-
-  // Direct
-  current_actuator_channels[ACTUATOR_SWASH_LEFT] = mixer_output_channels[ACTUATOR_SWASH_LEFT];
-  current_actuator_channels[ACTUATOR_SWASH_RIGHT] = mixer_output_channels[ACTUATOR_SWASH_RIGHT];
-  current_actuator_channels[ACTUATOR_SWASH_AFT] = mixer_output_channels[ACTUATOR_SWASH_AFT];
-
-  // MAIN ROTOR THROTTLE
-  current_actuator_channels[ACTUATOR_MAIN_ROTOR] = (int16_t)
-          ((  (ACTUATOR_MAIN_LP_PARAM - 1) * current_actuator_channels[ACTUATOR_MAIN_ROTOR]
-            +                           1  *     mixer_output_channels[ACTUATOR_MAIN_ROTOR]) / ACTUATOR_MAIN_LP_PARAM);
-
-  // TAIL ROTOR THROTTLE
-  // current_actuator_channels[ACTUATOR_TAIL_ROTOR] = (int16_t)
-  //         ((  (ACTUATOR_TAIL_LP_PARAM - 1) * current_actuator_channels[ACTUATOR_TAIL_ROTOR]
-  //           +                           1  *     mixer_output_channels[ACTUATOR_TAIL_ROTOR]) / ACTUATOR_TAIL_LP_PARAM);
-  current_actuator_channels[ACTUATOR_TAIL_ROTOR] = mixer_output_channels[ACTUATOR_TAIL_ROTOR];
-
-  // OUTPUTS
-  switch (flight_mode) {
-    case FLIGHT_MODE_POSITION:
-    case FLIGHT_MODE_ANGLE:
-    case FLIGHT_MODE_RATE:
-      // NOT YET IMPLEMENTED
-    default:
-    case FLIGHT_MODE_DIRECT:
-      output_actuator_channels[ACTUATOR_SWASH_LEFT]  = denormalize_pwm(current_actuator_channels[ACTUATOR_SWASH_LEFT]);
-      output_actuator_channels[ACTUATOR_SWASH_RIGHT] = denormalize_pwm(current_actuator_channels[ACTUATOR_SWASH_RIGHT]);
-      output_actuator_channels[ACTUATOR_SWASH_AFT]   = denormalize_pwm(current_actuator_channels[ACTUATOR_SWASH_AFT]);
-      output_actuator_channels[ACTUATOR_MAIN_ROTOR]  = denormalize_os1(current_actuator_channels[ACTUATOR_MAIN_ROTOR]);
-      output_actuator_channels[ACTUATOR_TAIL_ROTOR]  = denormalize_os1(current_actuator_channels[ACTUATOR_TAIL_ROTOR]);
-      break;
-  }
 }
 
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+void HAL_UART_RxCpltCallback(const UART_HandleTypeDef *huart)
 {
   if (huart->Instance == USART3)
   {
     for (uint16_t i = 0; i < 8; i++) {
 
       // Store received byte in circular buffer
-      uint16_t next_head = (uart3_rb.head + 1) % UART3_RX_BUFFER_SIZE;
+      const uint16_t next_head = (uart3_rb.head + 1) % UART3_RX_BUFFER_SIZE;
 
       // Check if buffer is not full
       if (next_head != uart3_rb.tail) {
@@ -1019,6 +914,7 @@ void on_crsf_frame(uint8_t type,
       for (uint8_t i = 0; i < CRSF_CHANNEL_COUNT; i++) {
         received_crsf_channels[i] = channel_frame.channels[i];
       }
+      update_channels();
       break;
     }
     case CRSF_FRAME_TYPE_LNK: {
@@ -1032,7 +928,6 @@ void on_crsf_frame(uint8_t type,
 
   }
 
-  update_channels();
 }
 /* USER CODE END 4 */
 
@@ -1045,6 +940,7 @@ void Error_Handler(void)
   /* USER CODE BEGIN Error_Handler_Debug */
   /* User can add his own implementation to report the HAL error return state */
   __disable_irq();
+  // ReSharper disable once CppDFAEndlessLoop
   while (1) {
     HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, GPIO_PIN_SET);
     HAL_Delay(100);

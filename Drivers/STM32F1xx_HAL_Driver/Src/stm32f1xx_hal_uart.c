@@ -2619,7 +2619,7 @@ __weak void HAL_UART_TxHalfCpltCallback(UART_HandleTypeDef *huart)
   *                the configuration information for the specified UART module.
   * @retval None
   */
-__weak void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+__weak void HAL_UART_RxCpltCallback(const UART_HandleTypeDef *huart)
 {
   /* Prevent unused argument(s) compilation warning */
   UNUSED(huart);

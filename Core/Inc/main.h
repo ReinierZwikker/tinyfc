@@ -36,13 +36,6 @@ extern "C" {
 
 /* Exported types ------------------------------------------------------------*/
 /* USER CODE BEGIN ET */
-#define UART3_RX_BUFFER_SIZE 256
-
-typedef struct {
-  uint8_t buffer[UART3_RX_BUFFER_SIZE];
-  volatile uint16_t head;
-  volatile uint16_t tail;
-} uart_buffer_t;
 
 /* USER CODE END ET */
 

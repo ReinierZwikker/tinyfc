@@ -6,7 +6,7 @@
 #include "main_conf.h"
 
 #include <stdint.h>
-#include <math.h>
+// #include <math.h>
 
 
 uint16_t convert_crsf_to_pwm(uint16_t crsf_value) {

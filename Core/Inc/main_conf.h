@@ -50,7 +50,14 @@
 
 // ACTUATOR MAPPING
 #define MIXER_INPUT_CHANNEL_COUNT 5
+#define STATE_CHANNEL_COUNT 5
 #define ACTUATOR_CHANNEL_COUNT 5
+
+#define STATE_SWASH_LEFT 0
+#define STATE_SWASH_RIGHT 1
+#define STATE_SWASH_AFT 2
+#define STATE_MAIN_ROTOR 3
+#define STATE_TAIL_ROTOR 4
 
 #define ACTUATOR_SWASH_LEFT 0
 #define ACTUATOR_SWASH_RIGHT 1
@@ -58,19 +65,20 @@
 #define ACTUATOR_MAIN_ROTOR 3
 #define ACTUATOR_TAIL_ROTOR 4
 
-#define ACTUATOR_SWASH_LP_PARAM 4
 #define ACTUATOR_MAIN_LP_PARAM 16
 #define ACTUATOR_MAIN_MAX_DELTA 2
-#define ACTUATOR_TAIL_LP_PARAM 4
+// #define ACTUATOR_SWASH_LP_PARAM 4
+// #define ACTUATOR_TAIL_LP_PARAM 4
 
 
 // HELI SETTINGS
-#define ROTOR_PHASE_ANGLE_SIN ? // calculated from φ=90deg
-#define ROTOR_PHASE_ANGLE_COS ? // calculated from φ=90deg
+// #define ROTOR_PHASE_ANGLE_SIN ? // calculated from φ=90deg
+// #define ROTOR_PHASE_ANGLE_COS ? // calculated from φ=90deg
 #define ROTOR_LON_TRIM 0
 #define ROTOR_LAT_TRIM 0
 #define ROTOR_PEDAL_TRIM 0
 #define ROTOR_MAIN_TO_PEDAL_INV_GAIN 2 // => 1/G
+#define COLL_TO_PEDAL_INV_GAIN 3 // => 1/G
 
 // RADIO SETTINGS
 #define MAX_RADIO_STATS_AGE 500 // ms
@@ -78,6 +86,7 @@
 
 // OTHER SETTINGS
 #define BLINK_TIME 50 // ms
+#define UART3_RX_BUFFER_SIZE 256
 
 
 #endif /* __CONSTANTS_H */

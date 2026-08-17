@@ -21,7 +21,13 @@ void disarm_mixer() {
 }
 
 void reset_mixer() {
-  memset(states, 0, STATE_CHANNEL_COUNT);
+  // memset(states, 0, STATE_CHANNEL_COUNT*sizeof(int16_t));
+
+  states[STATE_SWASH_LEFT]  = 0;
+  states[STATE_SWASH_RIGHT] = 0;
+  states[STATE_SWASH_AFT]   = 0;
+  states[STATE_MAIN_ROTOR]  = -NORM_RANGE;
+  states[STATE_TAIL_ROTOR]  = -NORM_RANGE;
 }
 
 
@@ -30,38 +36,40 @@ void update_mixer(const int16_t *inputs, uint16_t *outputs,
 
   #define SIN_60(x)  ((x) - (x)/8 - (x)/128 - (x)/512)   //  1000*sin(60) = 866.02... ~= 865
 
-  int16_t new_states[STATE_CHANNEL_COUNT] = {0};
+  int16_t new_states[STATE_CHANNEL_COUNT];
+  new_states[STATE_MAIN_ROTOR]  = -NORM_RANGE;
+  new_states[STATE_TAIL_ROTOR]  = -NORM_RANGE;
 
   const int16_t lat_cyc_sin60 = SIN_60(inputs[INPUT_CHANNEL_LAT_CYC]);
   const int16_t lon_cyc_half  = (int16_t) (inputs[INPUT_CHANNEL_LON_CYC] / 2);
 
   // SWASH PLATE
-  new_states[ACTUATOR_SWASH_LEFT] = (int16_t)
+  new_states[STATE_SWASH_LEFT] = (int16_t)
           (  inputs[INPUT_CHANNEL_COLLECTIVE]
            + lon_cyc_half
            + lat_cyc_sin60);
 
-  new_states[ACTUATOR_SWASH_RIGHT] = (int16_t) (-1 *
+  new_states[STATE_SWASH_RIGHT] = (int16_t) (-1 *
           (  inputs[INPUT_CHANNEL_COLLECTIVE]
            + lon_cyc_half
            - lat_cyc_sin60));
 
-  new_states[ACTUATOR_SWASH_AFT] = (int16_t)
+  new_states[STATE_SWASH_AFT] = (int16_t)
           (  inputs[INPUT_CHANNEL_COLLECTIVE]
            - inputs[INPUT_CHANNEL_LON_CYC]);
 
-  new_states[ACTUATOR_MAIN_ROTOR] = inputs[INPUT_CHANNEL_THROTTLE];
+  new_states[STATE_MAIN_ROTOR] = inputs[INPUT_CHANNEL_THROTTLE];
 
-  new_states[ACTUATOR_TAIL_ROTOR] = (int16_t)
+  new_states[STATE_TAIL_ROTOR] = (int16_t)
           (  inputs[INPUT_CHANNEL_THROTTLE] * (1 / ROTOR_MAIN_TO_PEDAL_INV_GAIN)
            + inputs[INPUT_CHANNEL_COLLECTIVE] * (1 / COLL_TO_PEDAL_INV_GAIN)
            - inputs[INPUT_CHANNEL_PEDALS]
            + ROTOR_PEDAL_TRIM);
 
   // LIMITS
-  for (uint8_t i = 0; i < ACTUATOR_CHANNEL_COUNT; i++) {
-    if (new_states[i] > 1000) { new_states[i] = 1000; }
-    if (new_states[i] < -1000) { new_states[i] = -1000; }
+  for (uint8_t i = 0; i < STATE_CHANNEL_COUNT; i++) {
+    if (new_states[i] > NORM_RANGE) { new_states[i] = NORM_RANGE; }
+    if (new_states[i] < -NORM_RANGE) { new_states[i] = -NORM_RANGE; }
   }
 
   // SWASHPLATE SERVOS
@@ -96,9 +104,10 @@ void update_mixer(const int16_t *inputs, uint16_t *outputs,
     new_states[STATE_MAIN_ROTOR] = (int16_t) (states[STATE_MAIN_ROTOR] - ACTUATOR_MAIN_MAX_DELTA);
   }
 
-  states[ACTUATOR_MAIN_ROTOR] = (int16_t)
-          ((  (ACTUATOR_MAIN_LP_PARAM - 1) *     states[ACTUATOR_MAIN_ROTOR]
-            +                           1  * new_states[ACTUATOR_MAIN_ROTOR]) / ACTUATOR_MAIN_LP_PARAM);
+  // states[STATE_MAIN_ROTOR] = (int16_t)
+          // ((  (ACTUATOR_MAIN_LP_PARAM - 1) *     states[STATE_MAIN_ROTOR]
+            // +                           1  * new_states[STATE_MAIN_ROTOR]) / ACTUATOR_MAIN_LP_PARAM);
+  states[STATE_MAIN_ROTOR] = new_states[STATE_MAIN_ROTOR];
 
 
 

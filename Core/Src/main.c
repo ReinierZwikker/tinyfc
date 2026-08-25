@@ -924,7 +924,7 @@ void update_channels() {
   mixer_input_channels[INPUT_CHANNEL_THROTTLE] = (int16_t) (normalize_crsf(received_crsf_channels[CRSF_CHANNEL_THROTTLE]));
 }
 
-void HAL_UART_RxCpltCallback(const UART_HandleTypeDef *huart)
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
   if (huart->Instance == USART3)
   {

@@ -67,12 +67,12 @@ void Error_Handler(void);
 #define PWM4_GPIO_Port GPIOA
 #define VBAT_MEAS_Pin GPIO_PIN_1
 #define VBAT_MEAS_GPIO_Port GPIOB
-#define PWM2_Pin GPIO_PIN_13
-#define PWM2_GPIO_Port GPIOB
+#define PWM0_Pin GPIO_PIN_13
+#define PWM0_GPIO_Port GPIOB
 #define PWM1_Pin GPIO_PIN_14
 #define PWM1_GPIO_Port GPIOB
-#define PWM0_Pin GPIO_PIN_15
-#define PWM0_GPIO_Port GPIOB
+#define PWM2_Pin GPIO_PIN_15
+#define PWM2_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
 
